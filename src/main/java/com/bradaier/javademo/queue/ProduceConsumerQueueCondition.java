@@ -1,71 +1,82 @@
 package com.bradaier.javademo.queue;
 
 import java.util.LinkedList;
-import java.util.Queue;
+import java.util.Random;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
+/**
+ * @author w-tomato
+ * @description Condition版本的生产者消费者模式
+ * @date 2023/5/23
+ */
 public class ProduceConsumerQueueCondition {
 
-    private static final int MAX_CAPACITY = 10;
-    private final Queue<Integer> queue = new LinkedList<>();
+    private static final int MAX_SIZE = 10;
+    private static final LinkedList<Integer> queue = new LinkedList<>();
+    // 这里用可重入锁其实没有用到可重入特性，只是为了用Condition
+    private static final Lock lock = new ReentrantLock();
+    // 这里用两个Condition，一个用于生产者，一个用于消费者，这样就不用notifyAll了
+    // 最主要避免了虚假唤醒，也就是说，生产者只唤醒消费者，消费者只唤醒生产者，如果用wait/notify，生产者有可能唤醒的还是生产者，这样就会出现虚假唤醒
+    private static final Condition notFull = lock.newCondition();
+    private static final Condition notEmpty = lock.newCondition();
 
-    private final Lock lock = new ReentrantLock();
-    private final Condition notEmpty = lock.newCondition();
-    private final Condition notFull = lock.newCondition();
-
-    public void produce(int num) throws InterruptedException {
+    // 生产者，依然是如果队列满了，等待消费者消费，如果成功生产，通知消费者消费
+    public void producer() {
         lock.lock();
         try {
-            while (queue.size() == MAX_CAPACITY) {
-                System.out.println("队列已满，生产者进入等待状态...");
+            if (queue.size() == MAX_SIZE) {
+                System.out.println("队列满了，等待消费者消费");
                 notFull.await();
             }
-            queue.add(num);
-            System.out.println("生产者生产了：" + num);
+            int good = new Random().nextInt(100);
+            queue.add(good);
+            System.out.println("生产者生产了：" + good + " 当前队列大小：" + queue.size());
+            Thread.sleep(1000);
             notEmpty.signalAll();
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
         } finally {
             lock.unlock();
         }
     }
 
-    public void consume() throws InterruptedException {
+    // 消费者，依然是如果队列空了，等待生产者生产，如果成功消费，通知生产者生产
+    public int consumer() {
         lock.lock();
         try {
-            while (queue.isEmpty()) {
-                System.out.println("队列为空，消费者进入等待状态...");
+            if (queue.size() == 0) {
+                System.out.println("队列空了，等待生产者生产");
                 notEmpty.await();
             }
-            int num = queue.poll();
-            System.out.println("消费者消费了：" + num);
+            Integer remove = queue.remove();
+            System.out.println("消费者消费了：" + remove + " 当前队列大小：" + queue.size());
+            Thread.sleep(1000);
             notFull.signalAll();
+            return remove;
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
         } finally {
             lock.unlock();
         }
     }
 
     public static void main(String[] args) {
-        ProduceConsumerQueueCondition demo = new ProduceConsumerQueueCondition();
-        Thread producerThread = new Thread(() -> {
-            for (int i = 0; i < 20; i++) {
-                try {
-                    demo.produce(i);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
+        ProduceConsumerQueueCondition produceConsumerQueueCondition = new ProduceConsumerQueueCondition();
+
+        new Thread(() -> {
+            while (true) {
+                produceConsumerQueueCondition.producer();
             }
-        });
-        Thread consumerThread = new Thread(() -> {
-            for (int i = 0; i < 20; i++) {
-                try {
-                    demo.consume();
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
+        }).start();
+
+        new Thread(() -> {
+            while (true) {
+                produceConsumerQueueCondition.consumer();
             }
-        });
-        producerThread.start();
-        consumerThread.start();
+        }).start();
     }
+
+
 }
